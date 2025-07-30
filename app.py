@@ -72,6 +72,16 @@ with st.expander("📥 Download Sample Excel (for demo)"):
     b64 = base64.b64encode(sample_xlsx.read()).decode()
     href = f'<a href="data:application/octet-stream;base64,{b64}" download="subjects_sample.xlsx">Download sample_subjects.xlsx</a>'
     st.markdown(href, unsafe_allow_html=True)
+    st.markdown("""
+    ### Sample Excel Format
+
+    | Code   | Credit | Type   |
+    |--------|--------|--------|
+    | CS101  | 4      | Theory |
+    | MA102  | 3      | Theory |
+    | PH103  | 3      | Theory |
+    | MCQ201 | 2      | MCQ   |
+    """, unsafe_allow_html=True)
 
 # ========== EXPLAIN SGPA ==========
 with st.expander("📖 What is SGPA? (click to expand)"):
@@ -90,8 +100,15 @@ def load_subjects_from_excel(file):
     wb = openpyxl.load_workbook(file)
     ws = wb.active
     subjects = []
+    header = [cell.value for cell in ws[1]]
+    col_map = {name: idx for idx, name in enumerate(header)}
     for row in ws.iter_rows(min_row=2, values_only=True):  # Skip header
-        code, credit, type_ = row
+        try:
+            code = row[col_map.get("Code")]
+            credit = row[col_map.get("Credit")]
+            type_ = row[col_map.get("Type")]
+        except Exception:
+            continue
         if str(type_).strip() not in ("Theory", "MCQ"):
             continue
         subjects.append({'code': str(code), 'credit': float(credit), 'type': str(type_)})
@@ -159,22 +176,33 @@ if uploaded_file:
                 total_credits = 0
                 weighted_sum = 0
                 errors = []
+                results_rows = []
                 for idx, subj in enumerate(subjects):
                     marks = marks_inputs[idx]
                     if any(m < 0 for m in marks.values()):
                         errors.append(f"Negative marks at subject {subj['code']}")
                         continue
                     total = marks['internal'] + marks['practical'] + marks['endsem']
-                    max_marks = 100  # You can customize per subject scheme
+                    max_marks = 100  # Fixed as per scheme
                     grade_point = min(10, (total / max_marks) * 10)
                     weighted_sum += grade_point * subj['credit']
                     total_credits += subj['credit']
+                    results_rows.append({
+                        'Code': subj['code'],
+                        'Credit': subj['credit'],
+                        'Type': subj['type'],
+                        'Internal Marks': marks['internal'],
+                        'Practical Marks': marks['practical'],
+                        'End Sem Marks': marks['endsem'],
+                        'Total Marks': total,
+                        'Grade Point': round(grade_point, 2)
+                    })
                 if errors:
                     st.error("Some marks were invalid: " + "; ".join(errors))
                 elif total_credits == 0:
                     st.error("No credits found. Please check your Excel file.")
                 else:
-                    sgpa = weighted_sum / total_credits
+                    sgpa = weighted_sum / total_credits if total_credits > 0 else 0
 
                     # ========== ANIMATED RESULT ==========
                     st.balloons()
@@ -206,6 +234,38 @@ if uploaded_file:
                             - SGPA = ∑(grade_point × credit) / ∑credits
                         """)
 
+                    # ========== DOWNLOAD MARKS & SGPA ==========
+                    # Add SGPA as last row
+                    results_rows.append({
+                        'Code': '',
+                        'Credit': '',
+                        'Type': '',
+                        'Internal Marks': '',
+                        'Practical Marks': '',
+                        'End Sem Marks': '',
+                        'Total Marks': '',
+                        'Grade Point': f'SGPA: {sgpa:.2f}'
+                    })
+                    results_df = pd.DataFrame(results_rows)
+                    # Export to Excel
+                    output_xlsx = BytesIO()
+                    with pd.ExcelWriter(output_xlsx, engine='openpyxl') as writer:
+                        results_df.to_excel(writer, index=False, sheet_name='Results')
+                    output_xlsx.seek(0)
+                    st.download_button(
+                        label="📥 Download Marks & SGPA (Excel)",
+                        data=output_xlsx,
+                        file_name="SGPA_results.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    # Also provide CSV option
+                    output_csv = results_df.to_csv(index=False).encode()
+                    st.download_button(
+                        label="📥 Download Marks & SGPA (CSV)",
+                        data=output_csv,
+                        file_name="SGPA_results.csv",
+                        mime="text/csv"
+                    )
     except Exception as e:
         st.error(f"Error reading Excel file: {e}")
 else:
